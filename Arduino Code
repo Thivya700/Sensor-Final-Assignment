@@ -1,0 +1,122 @@
+#define BLYNK_TEMPLATE_ID "TMPL6SS5aV3Ga"
+#define BLYNK_TEMPLATE_NAME "Temperature Humidity Light"
+#define BLYNK_AUTH_TOKEN "06MMATUszdREfP_UY_Nwh8N6QT5pbSs4"
+
+#include <ESP8266WiFi.h>
+#include <WiFiClient.h>
+#include <ESP8266HTTPClient.h>
+#include <DHT.h>
+#include <BlynkSimpleEsp8266.h>
+
+#define DHTPIN D2      // GPIO pin connected to DHT sensor
+#define DHTTYPE DHT22  // DHT type (DHT11 or DHT22)
+#define ldr_pin A0     // Define the LDR pin (analog pin)
+
+const char* ssid = "Yahweh";         // WiFi SSID
+const char* password = "77770000";   // WiFi password
+const char* serverUrl = "http://192.168.168.28/data_handler.php"; // Server URL for handling data
+
+DHT dht(DHTPIN, DHTTYPE); // Create a DHT object
+
+// Variables to keep track of the total temperature, light and the number of readings
+float totalTemperature = 0;
+int totalLight = 0;
+int numReadings = 0;
+
+void setup() {
+  Serial.begin(115200); // Start serial communication for debugging
+  WiFi.begin(ssid, password); // Connect to WiFi network
+  Blynk.begin(BLYNK_AUTH_TOKEN, ssid, password); // Initialize Blynk
+
+  // Wait until connected to WiFi
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Connecting to WiFi...");
+  }
+
+  Serial.println("Connected to WiFi");
+  dht.begin(); // Initialize the DHT sensor
+}
+
+void loop() {
+  float temperature = dht.readTemperature(); // Read temperature from DHT sensor
+  int ldrValue = analogRead(ldr_pin);  // Read the analog value from the LDR
+  float humidity = dht.readHumidity();   // Read humidity from DHT sensor
+
+  // Check if sensor readings are valid
+  if (isnan(temperature) || isnan(humidity)) {
+    Serial.println("Failed to read from DHT sensor!");
+    return;
+  }
+
+  // Update the total temperature, light and number of readings
+  totalTemperature += temperature;
+  totalLight += ldrValue;
+  numReadings++;
+
+  // Calculate the average temperature and light
+  float averageTemperature = totalTemperature / numReadings;
+  float averageLight = totalLight / numReadings;
+
+  // Print the average temperature and light to the Serial Monitor
+  Serial.print("Average Temperature: ");
+  Serial.println(averageTemperature);
+  Serial.print("Average Light: ");
+  Serial.println(averageLight);
+
+  // Check if the average temperature exceeds the threshold
+  if (averageTemperature > 35) {
+    Blynk.logEvent("tempalert");
+  }
+ 
+  // Check if the average light exceeds the threshold
+  if (averageLight > 700) {
+    Blynk.logEvent("lightalert");
+  }
+
+  sendDataToServer(temperature, humidity, ldrValue); // Send sensor data to server
+
+  Blynk.virtualWrite(V0, temperature);
+  Blynk.virtualWrite(V2, ldrValue);
+
+  Blynk.run();
+
+  delay(30000); // Delay for 30 seconds before next reading
+}
+
+void sendDataToServer(float temperature, float humidity, int light) {
+  if (WiFi.status() == WL_CONNECTED) { // Check if WiFi is connected
+    WiFiClient client; // Create a WiFi client object
+    HTTPClient http;   // Create an HTTP client object
+
+    Serial.print("Connecting to server: ");
+    Serial.println(serverUrl);
+
+    http.begin(client, serverUrl); // Begin HTTP connection to server
+    http.addHeader("Content-Type", "application/x-www-form-urlencoded"); // Set content type for HTTP POST
+
+    // Format data to send as POST request
+    String postData = "temperature=" + String(temperature) +
+                      "&humidity=" + String(humidity) +
+                      "&light=" + String(light);
+
+    // Send POST request with formatted data
+    int httpResponseCode = http.POST(postData);
+
+    // Check HTTP response code
+    if (httpResponseCode > 0) {
+      Serial.print("HTTP Response code: ");
+      Serial.println(httpResponseCode);
+      String response = http.getString(); // Get response from server
+      Serial.println("Server response:");
+      Serial.println(response); // Print server response to Serial Monitor
+    } else {
+      Serial.print("Error occurred while sending HTTP POST: ");
+      Serial.println(httpResponseCode);
+    }
+
+    http.end(); // Close HTTP connection
+  } else {
+    Serial.println("WiFi not connected!");
+  }
+}
