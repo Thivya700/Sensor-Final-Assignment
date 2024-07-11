@@ -23,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($conn->query($sql) === TRUE) {
         echo "Data inserted successfully";
         
-        // Calculate averages, min, max
+        // Calculate averages, min, max for the latest 10 data entries
         $sql_process = "SELECT 
                             AVG(temperature) AS avg_temperature, 
                             MIN(temperature) AS min_temperature, 
@@ -34,7 +34,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             AVG(light) AS avg_light, 
                             MIN(light) AS min_light, 
                             MAX(light) AS max_light 
-                        FROM sensordata";
+                        FROM 
+                            (SELECT temperature, humidity, light FROM sensordata ORDER BY timestamp DESC LIMIT 10) AS subquery";
         
         $result_process = $conn->query($sql_process);
         
