@@ -12,9 +12,27 @@ if ($conn->connect_error) {
     die("Connection failed: " . $conn->connect_error);
 }
 
-// Fetch processed data from processeddata table
+// Fetch processed data from processeddata table including insights
 function fetchProcessedData($conn) {
-    $sql = "SELECT * FROM processeddata ORDER BY timestamp DESC";
+    $sql = "SELECT *, 
+                   CASE
+                       WHEN avg_temperature > 28 THEN 'Temperature is higher than usual.'
+                       WHEN avg_temperature < 22 THEN 'Temperature is lower than usual.'
+                       ELSE 'Temperature is within normal range.'
+                   END AS temperature_insight,
+                   CASE
+                       WHEN avg_humidity > 70 THEN 'High humidity may cause discomfort.'
+                       WHEN avg_humidity < 40 THEN 'Low humidity may cause dryness.'
+                       ELSE 'Humidity levels are comfortable.'
+                   END AS humidity_insight,
+                   CASE
+                       WHEN avg_light < 200 THEN 'Low light levels detected.'
+                       WHEN avg_light > 800 THEN 'High light levels detected.'
+                       ELSE 'Light levels are optimal.'
+                   END AS light_insight
+            FROM processeddata 
+            ORDER BY timestamp DESC
+            LIMIT 10"; // Limit to latest 10 entries for efficiency
     $result = $conn->query($sql);
 
     $data = array();
@@ -27,10 +45,44 @@ function fetchProcessedData($conn) {
     return $data;
 }
 
+// Function to calculate insights based on average, min, max values
+function calculateInsights($data) {
+    foreach ($data as &$entry) {
+        // Temperature insights
+        if ($entry['avg_temperature'] > 28) {
+            $entry['temperature_insight'] = 'Temperature is higher than usual.';
+        } elseif ($entry['avg_temperature'] < 22) {
+            $entry['temperature_insight'] = 'Temperature is lower than usual.';
+        } else {
+            $entry['temperature_insight'] = 'Temperature is within normal range.';
+        }
+
+        // Humidity insights
+        if ($entry['avg_humidity'] > 70) {
+            $entry['humidity_insight'] = 'High humidity may cause discomfort.';
+        } elseif ($entry['avg_humidity'] < 40) {
+            $entry['humidity_insight'] = 'Low humidity may cause dryness.';
+        } else {
+            $entry['humidity_insight'] = 'Humidity levels are comfortable.';
+        }
+
+        // Light insights
+        if ($entry['avg_light'] < 200) {
+            $entry['light_insight'] = 'Low light levels detected.';
+        } elseif ($entry['avg_light'] > 800) {
+            $entry['light_insight'] = 'High light levels detected.';
+        } else {
+            $entry['light_insight'] = 'Light levels are optimal.';
+        }
+    }
+    return $data;
+}
+
 // Check if action is fetch_data and fetch processed data
 if (isset($_GET['action']) && $_GET['action'] === 'fetch_data') {
     $processedData = fetchProcessedData($conn);
-    echo json_encode($processedData);
+    $processedDataWithInsights = calculateInsights($processedData);
+    echo json_encode($processedDataWithInsights);
     exit;
 }
 
@@ -56,7 +108,7 @@ $conn->close();
         }
 
         .container {
-            max-width: 1200px; /* Adjust width as needed */
+            max-width: 1400px; /* Adjust width as needed */
             margin: auto;
             background-color: #fff;
             padding: 20px;
@@ -65,7 +117,7 @@ $conn->close();
 
         .scrollable-table {
             overflow-y: auto; /* Only vertical scroll */
-            max-height: 400px; /* Adjust height as needed */
+            max-height: 700px; /* Adjust height as needed */
         }
 
         table {
@@ -134,6 +186,7 @@ $conn->close();
                     <th>Average Light</th>
                     <th>Min Light</th>
                     <th>Max Light</th>
+                    <th>Insights</th> <!-- New column for insights -->
                     <th>Timestamp</th>
                 </tr>
             </thead>
@@ -157,6 +210,9 @@ $conn->close();
 </div>
 
 <script>
+    // Global variables to store chart instances
+    var temperatureChart, humidityChart, lightChart;
+
     // Function to fetch processed data and update both table and charts
     function fetchAndDisplayData() {
         var xhr = new XMLHttpRequest();
@@ -181,6 +237,7 @@ $conn->close();
                         <td>${row.avg_light}</td>
                         <td>${row.min_light}</td>
                         <td>${row.max_light}</td>
+                        <td>${row.temperature_insight}<br>${row.humidity_insight}<br>${row.light_insight}</td> <!-- Display insights -->
                         <td>${row.timestamp}</td>
                     `;
                     tableBody.appendChild(tr);
@@ -196,123 +253,86 @@ $conn->close();
     // Function to update charts with new data
     function updateCharts(data) {
         // Extract latest data for charts
-        var latestData = data.slice(0, 10); // Get latest 10 data points
+        var latestData = data.slice(0, 10).reverse(); // Get latest 10 data points and reverse the order
 
         // Extract data for charts
         var timestamps = latestData.map(function(entry) { return entry.timestamp; });
+        var temperatures = latestData.map(function(entry) { return entry.avg_temperature; });
+        var humidities = latestData.map(function(entry) { return entry.avg_humidity; });
+        var lights = latestData.map(function(entry) { return entry.avg_light; });
 
         // Update temperature chart
-        var tempCtx = document.getElementById('temperatureChart').getContext('2d');
-        var temperatureChart = new Chart(tempCtx, {
-            type: 'line',
-            data: {
-                labels: timestamps,
-                datasets: [{
-                    label: 'Average Temperature',
-                    data: latestData.map(function(entry) { return entry.avg_temperature; }),
-                    borderColor: 'rgb(255, 99, 132)',
-                    backgroundColor: 'rgba(255, 99, 132, 0.2)',
-                    tension: 0.1,
-                    fill: false
-                }]
-            },
-            options: {
-                scales: {
-                    x: {
-                        reverse: true, // Display latest timestamps on the right
-                        display: true,
-                        title: {
-                            display: true,
-                            text: 'Timestamp'
-                        }
-                    },
-                    y: {
-                        display: true,
-                        title: {
-                            display: true,
-                            text: 'Average Temperature'
-                        }
-                    }
+        if (temperatureChart) {
+            temperatureChart.data.labels = timestamps;
+            temperatureChart.data.datasets[0].data = temperatures;
+            temperatureChart.update();
+        } else {
+            var tempCtx = document.getElementById('temperatureChart').getContext('2d');
+            temperatureChart = new Chart(tempCtx, {
+                type: 'line',
+                data: {
+                    labels: timestamps,
+                    datasets: [{
+                        label: 'Average Temperature',
+                        data: temperatures,
+                        backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                        borderColor: 'rgba(255, 99, 132, 1)',
+                        borderWidth: 1
+                    }]
                 }
-            }
-        });
+            });
+        }
 
         // Update humidity chart
-        var humCtx = document.getElementById('humidityChart').getContext('2d');
-        var humidityChart = new Chart(humCtx, {
-            type: 'line',
-            data: {
-                labels: timestamps,
-                datasets: [{
-                    label: 'Average Humidity',
-                    data: latestData.map(function(entry) { return entry.avg_humidity; }),
-                    borderColor: 'rgb(54, 162, 235)',
-                    backgroundColor: 'rgba(54, 162, 235, 0.2)',
-                    tension: 0.1,
-                    fill: false
-                }]
-            },
-            options: {
-                scales: {
-                    x: {
-                        reverse: true, // Display latest timestamps on the right
-                        display: true,
-                        title: {
-                            display: true,
-                            text: 'Timestamp'
-                        }
-                    },
-                    y: {
-                        display: true,
-                        title: {
-                            display: true,
-                            text: 'Average Humidity'
-                        }
-                    }
+        if (humidityChart) {
+            humidityChart.data.labels = timestamps;
+            humidityChart.data.datasets[0].data = humidities;
+            humidityChart.update();
+        } else {
+            var humidityCtx = document.getElementById('humidityChart').getContext('2d');
+            humidityChart = new Chart(humidityCtx, {
+                type: 'line',
+                data: {
+                    labels: timestamps,
+                    datasets: [{
+                        label: 'Average Humidity',
+                        data: humidities,
+                        backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                        borderColor: 'rgba(54, 162, 235, 1)',
+                        borderWidth: 1
+                    }]
                 }
-            }
-        });
+            });
+        }
 
         // Update light chart
-        var lightCtx = document.getElementById('lightChart').getContext('2d');
-        var lightChart = new Chart(lightCtx, {
-            type: 'line',
-            data: {
-                labels: timestamps,
-                datasets: [{
-                    label: 'Average Light',
-                    data: latestData.map(function(entry) { return entry.avg_light; }),
-                    borderColor: 'rgb(255, 205, 86)',
-                    backgroundColor: 'rgba(255, 205, 86, 0.2)',
-                    tension: 0.1,
-                    fill: false
-                }]
-            },
-            options: {
-                scales: {
-                    x: {
-                        reverse: true, // Display latest timestamps on the right
-                        display: true,
-                        title: {
-                            display: true,
-                            text: 'Timestamp'
-                        }
-                    },
-                    y: {
-                        display: true,
-                        title: {
-                            display: true,
-                            text: 'Average Light'
-                        }
-                    }
+        if (lightChart) {
+            lightChart.data.labels = timestamps;
+            lightChart.data.datasets[0].data = lights;
+            lightChart.update();
+        } else {
+            var lightCtx = document.getElementById('lightChart').getContext('2d');
+            lightChart = new Chart(lightCtx, {
+                type: 'line',
+                data: {
+                    labels: timestamps,
+                    datasets: [{
+                        label: 'Average Light Intensity',
+                        data: lights,
+                        backgroundColor: 'rgba(255, 206, 86, 0.2)',
+                        borderColor: 'rgba(255, 206, 86, 1)',
+                        borderWidth: 1
+                    }]
                 }
-            }
-        });
+            });
+        }
     }
 
-    // Fetch processed data initially and then every 30 seconds
-    fetchAndDisplayData(); // Initial fetch
-    setInterval(fetchAndDisplayData, 30000); // Refresh every 30 seconds
+    // Fetch and display data initially
+    fetchAndDisplayData();
+
+    // Set interval to fetch and update data every 30 seconds
+    setInterval(fetchAndDisplayData, 30000);
 </script>
 
 </body>
